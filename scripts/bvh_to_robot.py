@@ -3,6 +3,7 @@ import pathlib
 import time
 from general_motion_retargeting import GeneralMotionRetargeting as GMR
 from general_motion_retargeting import RobotMotionViewer
+from general_motion_retargeting.params import VIEWER_CAM_DISTANCE_DICT
 from general_motion_retargeting.utils.lafan1 import load_bvh_file
 from rich import print
 from tqdm import tqdm
@@ -36,7 +37,7 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--robot",
-        choices=["unitree_g1", "unitree_g1_with_hands", "booster_t1", "stanford_toddy", "fourier_n1", "engineai_pm01", "pal_talos", "pnd_adam_pro"],
+        choices=["unitree_g1", "unitree_g1_with_hands", "booster_t1", "stanford_toddy", "fourier_n1", "engineai_pm01", "pal_talos", "pnd_adam_pro", "agibot_x2"],
         default="unitree_g1",
     )
     
@@ -69,6 +70,20 @@ if __name__ == "__main__":
         "--motion_fps",
         default=30,
         type=int,
+    )
+
+    parser.add_argument(
+        "--pause_frame",
+        action="store_true",
+        default=False,
+        help="Pause after each frame for debugging.",
+    )
+
+    parser.add_argument(
+        "--follow_camera",
+        action="store_true",
+        default=False,
+        help="Whether to make the camera follow the robot root.",
     )
     
     args = parser.parse_args()
@@ -115,7 +130,10 @@ if __name__ == "__main__":
     # Start the viewer
     i = 0
     
-
+    if not args.follow_camera:
+        robot_motion_viewer.viewer.cam.lookat = [0, 0, 0.5]
+        robot_motion_viewer.viewer.cam.distance = VIEWER_CAM_DISTANCE_DICT[args.robot]
+        robot_motion_viewer.viewer.cam.elevation = -10  # 正面视角，轻微向下看
 
     while True:
         
@@ -145,7 +163,7 @@ if __name__ == "__main__":
             dof_pos=qpos[7:],
             human_motion_data=retargeter.scaled_human_data,
             rate_limit=args.rate_limit,
-            follow_camera=True,
+            follow_camera=args.follow_camera,
             # human_pos_offset=np.array([0.0, 0.0, 0.0])
         )
 
@@ -155,19 +173,31 @@ if __name__ == "__main__":
             i += 1
             if i >= len(lafan1_data_frames):
                 break
-   
-        # input("press to pview next frame")
+        if args.pause_frame:
+            input("press to view next frame")
         if args.save_path is not None:
             qpos_list.append(qpos)
     
     if args.save_path is not None:
         import pickle
+        import mujoco as mj
+        
         root_pos = np.array([qpos[:3] for qpos in qpos_list])
         # save from wxyz to xyzw
         root_rot = np.array([qpos[3:7][[1,2,3,0]] for qpos in qpos_list])
         dof_pos = np.array([qpos[7:] for qpos in qpos_list])
         local_body_pos = None
         body_names = None
+        
+        # Get joint names from mujoco model
+        model = robot_motion_viewer.model
+        joint_names = []
+        for i in range(model.njnt):
+            # skip root joint (free joint)
+            if i == 0 and model.jnt_type[0] == mj.mjtJoint.mjJNT_FREE:
+                continue
+            joint_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+            joint_names.append(joint_name)
         
         motion_data = {
             "fps": motion_fps,
@@ -176,6 +206,7 @@ if __name__ == "__main__":
             "dof_pos": dof_pos,
             "local_body_pos": local_body_pos,
             "link_body_list": body_names,
+            "joint_names": joint_names
         }
         with open(args.save_path, "wb") as f:
             pickle.dump(motion_data, f)

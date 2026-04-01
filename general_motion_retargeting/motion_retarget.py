@@ -78,7 +78,7 @@ class GeneralMotionRetargeting:
         self.use_ik_match_table1 = ik_config["use_ik_match_table1"]
         self.use_ik_match_table2 = ik_config["use_ik_match_table2"]
         self.human_scale_table = ik_config["human_scale_table"]
-        self.ground = ik_config["ground_height"] * np.array([0, 0, 1])
+        self.ground_offset = ik_config["ground_height"]
 
         self.max_iter = 10
 
@@ -101,8 +101,6 @@ class GeneralMotionRetargeting:
             self.ik_limits.append(mink.VelocityLimit(self.model, VELOCITY_LIMITS)) 
             
         self.setup_retarget_configuration()
-        
-        self.ground_offset = 0.0
 
     def setup_retarget_configuration(self):
         self.configuration = mink.Configuration(self.model)
@@ -121,7 +119,7 @@ class GeneralMotionRetargeting:
                     lm_damping=1,
                 )
                 self.human_body_to_task1[body_name] = task
-                self.pos_offsets1[body_name] = np.array(pos_offset) - self.ground
+                self.pos_offsets1[body_name] = np.array(pos_offset)
                 self.rot_offsets1[body_name] = R.from_quat(
                     rot_offset, scalar_first=True
                 )
@@ -139,7 +137,7 @@ class GeneralMotionRetargeting:
                     lm_damping=1,
                 )
                 self.human_body_to_task2[body_name] = task
-                self.pos_offsets2[body_name] = np.array(pos_offset) - self.ground
+                self.pos_offsets2[body_name] = np.array(pos_offset)
                 self.rot_offsets2[body_name] = R.from_quat(
                     rot_offset, scalar_first=True
                 )
@@ -160,12 +158,20 @@ class GeneralMotionRetargeting:
         if self.use_ik_match_table1:
             for body_name in self.human_body_to_task1.keys():
                 task = self.human_body_to_task1[body_name]
+                # if body_name not in human_data:
+                #     pos, rot = np.array([0, 0, 0]), np.array([1, 0, 0, 0])
+                # else:
+                #     pos, rot = human_data[body_name]
                 pos, rot = human_data[body_name]
                 task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos))
         
         if self.use_ik_match_table2:
             for body_name in self.human_body_to_task2.keys():
                 task = self.human_body_to_task2[body_name]
+                # if body_name not in human_data:
+                #     pos, rot = np.array([0, 0, 0]), np.array([1, 0, 0, 0])
+                # else:
+                #     pos, rot = human_data[body_name]
                 pos, rot = human_data[body_name]
                 task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(rot), pos))
             

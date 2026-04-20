@@ -1,14 +1,16 @@
 import argparse
 import pathlib
 import time
+import json
 from general_motion_retargeting import GeneralMotionRetargeting as GMR
 from general_motion_retargeting import RobotMotionViewer
-from general_motion_retargeting.params import VIEWER_CAM_DISTANCE_DICT
+from general_motion_retargeting.params import VIEWER_CAM_DISTANCE_DICT, IK_CONFIG_DICT
 from general_motion_retargeting.utils.lafan1 import load_bvh_file
 from rich import print
 from tqdm import tqdm
 import os
 import numpy as np
+import mujoco as mj
 
 if __name__ == "__main__":
     
@@ -85,7 +87,42 @@ if __name__ == "__main__":
         default=False,
         help="Whether to make the camera follow the robot root.",
     )
-    
+
+    parser.add_argument(
+        "--show_original_human_frame",
+        action="store_true",
+        default=False,
+        help="Overlay original BVH human frames (larger and transparent) for coordinate debugging.",
+    )
+
+    parser.add_argument(
+        "--original_human_axis_scale",
+        default=0.16,
+        type=float,
+        help="Axis size for original BVH frame overlay.",
+    )
+
+    parser.add_argument(
+        "--original_human_alpha",
+        default=0.15,
+        type=float,
+        help="Transparency for original BVH frame overlay.",
+    )
+
+    parser.add_argument(
+        "--up-axis",
+        choices=["y", "z"],
+        default="y",
+        help="The up axis of the input BVH file. The viewer uses z-up convention, so if the input BVH is y-up, it will be converted to z-up for correct visualization and retargeting.",
+    )
+
+    parser.add_argument(
+        "--show_body_frame",
+        action="store_true",
+        default=False,
+        help="Show body frame in the viewer (instead of inertial/world frame).",
+    )
+
     args = parser.parse_args()
     
     if args.save_path is not None:
@@ -95,13 +132,35 @@ if __name__ == "__main__":
         qpos_list = []
 
     
-    # Load SMPLX trajectory
-    lafan1_data_frames, actual_human_height = load_bvh_file(args.bvh_file, format=args.format)
+    src_human = f"bvh_{args.format}"
+    ik_config_path = IK_CONFIG_DICT[src_human][args.robot]
+    with open(ik_config_path) as f:
+        ik_config = json.load(f)
+    bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {})
+
+    # Load BVH trajectory with optional pre-FK hierarchy offsets.
+    if args.show_original_human_frame:
+        lafan1_data_frames, actual_human_height, original_human_data_frames = load_bvh_file(
+            args.bvh_file,
+            format=args.format,
+            hierarchy_offset=bvh_hierarchy_offset,
+            return_original_frames=True,
+            up_axis=args.up_axis,
+        )
+    else:
+        lafan1_data_frames, actual_human_height = load_bvh_file(
+            args.bvh_file,
+            format=args.format,
+            hierarchy_offset=bvh_hierarchy_offset,
+            return_original_frames=False,
+            up_axis=args.up_axis,
+        )
+        original_human_data_frames = None
     
     
     # Initialize the retargeting system
     retargeter = GMR(
-        src_human=f"bvh_{args.format}",
+        src_human=src_human,
         tgt_robot=args.robot,
         actual_human_height=actual_human_height,
     )
@@ -116,7 +175,10 @@ if __name__ == "__main__":
                                             # video_width=2080,
                                             # video_height=1170
                                             )
-    
+    if args.show_body_frame:
+        import mujoco as mj
+        robot_motion_viewer.viewer.opt.frame = mj.mjtFrame.mjFRAME_BODY
+
     # FPS measurement variables
     fps_counter = 0
     fps_start_time = time.time()
@@ -135,7 +197,7 @@ if __name__ == "__main__":
         robot_motion_viewer.viewer.cam.distance = VIEWER_CAM_DISTANCE_DICT[args.robot]
         robot_motion_viewer.viewer.cam.elevation = -10  # 正面视角，轻微向下看
 
-    while True:
+    while robot_motion_viewer.viewer.is_running():
         
         # FPS measurement
         fps_counter += 1
@@ -154,6 +216,23 @@ if __name__ == "__main__":
 
         # retarget
         qpos = retargeter.retarget(smplx_data)
+
+        original_human_overlay = None
+        if original_human_data_frames is not None:
+            original_frame = original_human_data_frames[i]
+            root_name = retargeter.human_root_name
+            if root_name in original_frame and root_name in retargeter.scaled_human_data:
+                root_shift = (
+                    retargeter.scaled_human_data[root_name][0]
+                    - original_frame[root_name][0]
+                )
+            else:
+                root_shift = np.zeros(3)
+
+            original_human_overlay = {
+                body_name: [pos + root_shift, rot]
+                for body_name, (pos, rot) in original_frame.items()
+            }
         
 
         # visualize
@@ -162,6 +241,9 @@ if __name__ == "__main__":
             root_rot=qpos[3:7],
             dof_pos=qpos[7:],
             human_motion_data=retargeter.scaled_human_data,
+            human_motion_data_original=original_human_overlay,
+            original_human_point_scale=args.original_human_axis_scale,
+            original_human_alpha=args.original_human_alpha,
             rate_limit=args.rate_limit,
             follow_camera=args.follow_camera,
             # human_pos_offset=np.array([0.0, 0.0, 0.0])
@@ -180,7 +262,6 @@ if __name__ == "__main__":
     
     if args.save_path is not None:
         import pickle
-        import mujoco as mj
         
         root_pos = np.array([qpos[:3] for qpos in qpos_list])
         # save from wxyz to xyzw

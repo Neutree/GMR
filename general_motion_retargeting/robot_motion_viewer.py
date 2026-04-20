@@ -18,8 +18,10 @@ def draw_frame(
     joint_name=None,
     orientation_correction=R.from_euler("xyz", [0, 0, 0]),
     pos_offset=np.array([0, 0, 0]),
+    alpha=1.0,
+    axis_width=0.005,
 ):
-    rgba_list = [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]]
+    rgba_list = [[1, 0, 0, alpha], [0, 1, 0, alpha], [0, 0, 1, alpha]]
     for i in range(3):
         geom = v.user_scn.geoms[v.user_scn.ngeom]
         mj.mjv_initGeom(
@@ -36,7 +38,7 @@ def draw_frame(
         mj.mjv_connector(
             v.user_scn.geoms[v.user_scn.ngeom],
             type=mj.mjtGeom.mjGEOM_ARROW,
-            width=0.005,
+            width=axis_width,
             from_=pos + pos_offset,
             to=pos + pos_offset + size * (mat @ fix)[:, i],
         )
@@ -98,9 +100,12 @@ class RobotMotionViewer:
             root_pos, root_rot, dof_pos, 
             # human data
             human_motion_data=None, 
+            human_motion_data_original=None,
             show_human_body_name=False,
             # scale for human point visualization
             human_point_scale=0.1,
+            original_human_point_scale=0.16,
+            original_human_alpha=0.35,
             # human pos offset add for visualization    
             human_pos_offset=np.array([0.0, 0.0, 0]),
             # rate limit
@@ -129,9 +134,21 @@ class RobotMotionViewer:
             self.viewer.cam.elevation = -10  # 正面视角，轻微向下看
             # self.viewer.cam.azimuth = 180    # 正面朝向机器人
         
-        if human_motion_data is not None:
+        if human_motion_data is not None or human_motion_data_original is not None:
             # Clean custom geometry
             self.viewer.user_scn.ngeom = 0
+            if human_motion_data_original is not None:
+                for _, (pos, rot) in human_motion_data_original.items():
+                    draw_frame(
+                        pos,
+                        R.from_quat(rot, scalar_first=True).as_matrix(),
+                        self.viewer,
+                        original_human_point_scale,
+                        pos_offset=human_pos_offset,
+                        alpha=original_human_alpha,
+                        axis_width=0.004,
+                    )
+
             # Draw the task targets for reference
             for human_body_name, (pos, rot) in human_motion_data.items():
                 draw_frame(
@@ -140,6 +157,8 @@ class RobotMotionViewer:
                     self.viewer,
                     human_point_scale,
                     pos_offset=human_pos_offset,
+                    alpha=1.0,
+                    axis_width=0.005,
                     joint_name=human_body_name if show_human_body_name else None
                     )
 

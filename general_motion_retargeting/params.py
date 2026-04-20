@@ -99,7 +99,7 @@ ROBOT_BASE_DICT = {
     "pal_talos": "base_link",
     "fourier_gr3": "base_link",
     "pnd_adam_pro": "pelvis",
-    "agibot_x2": "base_link",
+    "agibot_x2": "pelvis",
 }
 
 VIEWER_CAM_DISTANCE_DICT = {

@@ -23,6 +23,7 @@ class GeneralMotionRetargeting:
 
         # load the robot model
         self.xml_file = str(ROBOT_XML_DICT[tgt_robot])
+        self.src_human = src_human
         if verbose:
             print("Use robot model: ", self.xml_file)
         self.model = mj.MjModel.from_xml_path(self.xml_file)
@@ -78,9 +79,21 @@ class GeneralMotionRetargeting:
         self.use_ik_match_table1 = ik_config["use_ik_match_table1"]
         self.use_ik_match_table2 = ik_config["use_ik_match_table2"]
         self.human_scale_table = ik_config["human_scale_table"]
+        self.bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {})
+        # Optional root translation scaling to keep motion speed consistent
+        # after morphology offsets/scales are introduced.
+        self.root_motion_scale = float(ik_config.get("root_motion_scale", 1.0))
+        self.use_pre_fk_bvh_hierarchy_offset = (
+            self.src_human.startswith("bvh") and len(self.bvh_hierarchy_offset) > 0
+        )
+        # Optional: define human kinematic parent relation for applying pos offsets
+        # in parent local frame. When absent, fall back to body local frame.
+        self.human_parent_table = ik_config.get("human_parent_table", {})
         self.ground_offset = ik_config["ground_height"]
 
         self.max_iter = 10
+
+        self._root_ref_raw = None
 
         self.solver = solver
         self.damping = damping
@@ -149,7 +162,13 @@ class GeneralMotionRetargeting:
         # scale human data in local frame
         human_data = self.to_numpy(human_data)
         human_data = self.scale_human_data(human_data, self.human_root_name, self.human_scale_table)
-        human_data = self.offset_human_data(human_data, self.pos_offsets1, self.rot_offsets1)
+        if self.use_pre_fk_bvh_hierarchy_offset:
+            # When BVH hierarchy offsets are already applied before FK, skip post-FK
+            # position offsets in ik_match_table to avoid double-counting.
+            pos_offsets = {}
+        else:
+            pos_offsets = self.pos_offsets1
+        human_data = self.offset_human_data(human_data, pos_offsets, self.rot_offsets1)
         human_data = self.apply_ground_offset(human_data)
         if offset_to_ground:
             human_data = self.offset_human_data_to_ground(human_data)
@@ -222,7 +241,23 @@ class GeneralMotionRetargeting:
                 num_iter += 1
                 
             
-        return self.configuration.data.qpos.copy()
+        qpos = self.configuration.data.qpos.copy()
+        qpos = self.apply_root_motion_scale(qpos)
+        return qpos
+
+    def apply_root_motion_scale(self, qpos):
+        """Scale root translation (x, y) around first frame reference."""
+        if np.isclose(self.root_motion_scale, 1.0):
+            return qpos
+
+        if self._root_ref_raw is None:
+            self._root_ref_raw = qpos[:3].copy()
+            return qpos
+
+        qpos_scaled = qpos.copy()
+        delta = qpos_scaled[:2] - self._root_ref_raw[:2]
+        qpos_scaled[:2] = self._root_ref_raw[:2] + self.root_motion_scale * delta
+        return qpos_scaled
 
 
     def error1(self):
@@ -272,21 +307,45 @@ class GeneralMotionRetargeting:
         return human_data_global
     
     def offset_human_data(self, human_data, pos_offsets, rot_offsets):
-        """the pos offsets are applied in the local frame"""
+        """Apply rotation and position offsets.
+
+        Position offsets are interpreted in parent local frame when
+        ``self.human_parent_table`` provides a parent for the body; otherwise,
+        they fall back to body local frame for backward compatibility.
+        """
         offset_human_data = {}
+        updated_quats = {}
+
+        # First pass: apply per-body rotation offsets.
         for body_name in human_data.keys():
             pos, quat = human_data[body_name]
             offset_human_data[body_name] = [pos, quat]
-            # apply rotation offset first
-            updated_quat = (R.from_quat(quat, scalar_first=True) * rot_offsets[body_name]).as_quat(scalar_first=True)
+
+            rot_offset = rot_offsets.get(body_name, R.from_quat([1.0, 0.0, 0.0, 0.0], scalar_first=True))
+            updated_quat = (R.from_quat(quat, scalar_first=True) * rot_offset).as_quat(scalar_first=True)
+            updated_quats[body_name] = updated_quat
             offset_human_data[body_name][1] = updated_quat
-            
-            local_offset = pos_offsets[body_name]
-            # compute the global position offset using the updated rotation
-            global_pos_offset = R.from_quat(updated_quat, scalar_first=True).apply(local_offset)
-            
+
+        # Second pass: apply position offsets in parent frame (if available).
+        for body_name in human_data.keys():
+            pos, _ = human_data[body_name]
+            local_offset = pos_offsets.get(body_name, np.zeros(3))
+
+            parent_name = self.human_parent_table.get(body_name)
+            if parent_name is not None and parent_name in updated_quats:
+                ref_quat = updated_quats[parent_name]
+            else:
+                ref_quat = updated_quats[body_name]
+
+            global_pos_offset = R.from_quat(ref_quat, scalar_first=True).apply(local_offset)
             offset_human_data[body_name][0] = pos + global_pos_offset
-           
+        
+        # 打印 'RightLeg', 'RightFoot' 两个关节的距离
+        if 'RightLeg' in offset_human_data and 'RightFoot' in offset_human_data:
+            right_leg_pos = offset_human_data['RightLeg'][0]
+            right_foot_pos = offset_human_data['RightFoot'][0]
+            distance = np.linalg.norm(right_leg_pos - right_foot_pos)
+            print(f"Distance between RightLeg and RightFoot after offset: {distance:.4f}")
         return offset_human_data
             
     def offset_human_data_to_ground(self, human_data):

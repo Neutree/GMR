@@ -122,6 +122,12 @@ if __name__ == "__main__":
         default=False,
         help="Show body frame in the viewer (instead of inertial/world frame).",
     )
+    parser.add_argument(
+        "--ground_height",
+        default = None,
+        type=float,
+        help="override ground_height config in json file"
+    )
 
     args = parser.parse_args()
     
@@ -136,6 +142,8 @@ if __name__ == "__main__":
     ik_config_path = IK_CONFIG_DICT[src_human][args.robot]
     with open(ik_config_path) as f:
         ik_config = json.load(f)
+    if args.ground_height is not None:
+        ik_config["ground_height"] = args.ground_height
     bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {})
 
     # Load BVH trajectory with optional pre-FK hierarchy offsets.
@@ -164,6 +172,7 @@ if __name__ == "__main__":
         tgt_robot=args.robot,
         actual_human_height=actual_human_height,
     )
+    retargeter.ground_offset = ik_config.get("ground_height", 0.0)
 
     motion_fps = args.motion_fps
     

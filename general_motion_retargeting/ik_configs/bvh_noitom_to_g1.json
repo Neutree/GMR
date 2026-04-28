@@ -1,25 +1,25 @@
 {
     "robot_root_name": "pelvis",
     "human_root_name": "Hips",
-    "ground_height": 0.0,
-    "human_height_assumption": 1.8,
+    "ground_height": 0.09,
+    "human_height_assumption": 1.75,
     "use_ik_match_table1": true,
     "use_ik_match_table2": true,
     "human_scale_table": {
-        "Hips": 0.9,
-        "Spine2": 0.9,
-        "LeftUpLeg": 0.9,
-        "RightUpLeg": 0.9,
-        "LeftLeg": 0.9,
-        "RightLeg": 0.9,
-        "LeftFootMod": 0.9,
-        "RightFootMod": 0.9,
-        "LeftArm": 0.75,
-        "RightArm": 0.75,
-        "LeftForeArm": 0.75,
-        "RightForeArm": 0.75,
-        "LeftHand": 0.75,
-        "RightHand": 0.75
+        "Hips": 1,
+        "Spine2": 1,
+        "LeftUpLeg": 1,
+        "RightUpLeg": 1,
+        "LeftLeg": 1,
+        "RightLeg": 1,
+        "LeftFootMod": 1,
+        "RightFootMod": 1,
+        "LeftArm": 1,
+        "RightArm": 1,
+        "LeftForeArm": 1,
+        "RightForeArm": 1,
+        "LeftHand": 1,
+        "RightHand": 1
     },
     "ik_match_table1": {
         "pelvis": [
@@ -472,5 +472,40 @@
                 1
             ]
         ]
-    }
+    },
+    "human_parent_table": {
+        "LeftUpLeg": "Hips",
+        "RightUpLeg": "Hips",
+        "LeftLeg": "LeftUpLeg",
+        "RightLeg": "RightUpLeg",
+        "LeftFoot": "LeftLeg",
+        "RightFoot": "RightLeg",
+
+        "Spine1": "Hips",
+
+        "LeftArm": "Spine1",
+        "RightArm": "Spine1",
+        "LeftForeArm": "LeftArm",
+        "RightForeArm": "RightArm",
+        "LeftHand": "LeftForeArm",
+        "RightHand": "RightForeArm"
+    },
+    "bvh_hierarchy_offset": {
+        "LeftUpLeg": [0.01, -0.12, 0],
+        "RightUpLeg": [-0.01, -0.12, 0],
+        "LeftLeg": [0.0, 0.13, 0],
+        "RightLeg": [0.0, 0.13, 0],
+        "LeftFoot": [0.0, 0.13, 0],
+        "RightFoot": [0.0, 0.13, 0.0],
+
+        "Spine1": [0, -0.34, 0],
+
+        "LeftArm": [-0.048, 0.14, 0],
+        "RightArm": [0.048, 0.14, 0],
+        "LeftForeArm": [-0.09, 0, 0],
+        "RightForeArm": [0.09, 0, 0],
+        "LeftHand": [-0.06, 0, 0],
+        "RightHand": [0.06, 0, 0]
+    },
+    "root_motion_scale": 0.7
 }

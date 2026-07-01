@@ -19,6 +19,7 @@ class GeneralMotionRetargeting:
         damping: float=5e-1, # change from 1e-1 to 1e-2.
         verbose: bool=True,
         use_velocity_limit: bool=False,
+        bvh_hierarchy_offset_name: str=None,
     ) -> None:
 
         # load the robot model
@@ -79,12 +80,12 @@ class GeneralMotionRetargeting:
         self.use_ik_match_table1 = ik_config["use_ik_match_table1"]
         self.use_ik_match_table2 = ik_config["use_ik_match_table2"]
         self.human_scale_table = ik_config["human_scale_table"]
-        self.bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {})
+        self.bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {}).get(bvh_hierarchy_offset_name, {})
         # Optional root translation scaling to keep motion speed consistent
         # after morphology offsets/scales are introduced.
-        self.root_motion_scale = float(ik_config.get("root_motion_scale", 1.0))
+        self.root_motion_scale = np.array(ik_config.get("root_motion_scale", [1.0, 1.0, 1.0]))
         self.use_pre_fk_bvh_hierarchy_offset = (
-            self.src_human.startswith("bvh") and len(self.bvh_hierarchy_offset) > 0
+            self.src_human.startswith("bvh") and bvh_hierarchy_offset_name is not None
         )
         # Optional: define human kinematic parent relation for applying pos offsets
         # in parent local frame. When absent, fall back to body local frame.
@@ -92,6 +93,9 @@ class GeneralMotionRetargeting:
         self.ground_offset = ik_config["ground_height"]
 
         self.max_iter = 10
+        self.error_tolerance = 1e-2
+        self.improvement_tolerance = 1e-4
+        self._has_retargeted = False
 
         self._root_ref_raw = None
 
@@ -117,6 +121,7 @@ class GeneralMotionRetargeting:
 
     def setup_retarget_configuration(self):
         self.configuration = mink.Configuration(self.model)
+        self._initialize_configuration_qpos()
     
         self.tasks1 = []
         self.tasks2 = []
@@ -156,6 +161,23 @@ class GeneralMotionRetargeting:
                 )
                 self.tasks2.append(task)
                 self.task_errors2[task] = []
+
+    def _initialize_configuration_qpos(self):
+        qpos = self.configuration.data.qpos
+        qpos[:] = self.model.qpos0
+
+        for joint_id in range(self.model.njnt):
+            joint_type = int(self.model.jnt_type[joint_id])
+            if joint_type not in (int(mj.mjtJoint.mjJNT_HINGE), int(mj.mjtJoint.mjJNT_SLIDE)):
+                continue
+            if not self.model.jnt_limited[joint_id]:
+                continue
+
+            qpos_adr = int(self.model.jnt_qposadr[joint_id])
+            lower, upper = self.model.jnt_range[joint_id]
+            qpos[qpos_adr] = np.clip(qpos[qpos_adr], lower, upper)
+
+        mj.mj_forward(self.model, self.configuration.data)
 
   
     def update_targets(self, human_data, offset_to_ground=False):
@@ -200,54 +222,39 @@ class GeneralMotionRetargeting:
         self.update_targets(human_data, offset_to_ground)
 
         if self.use_ik_match_table1:
-            # Solve the IK problem
-            curr_error = self.error1()
-            dt = self.configuration.model.opt.timestep
-            vel1 = mink.solve_ik(
-                self.configuration, self.tasks1, dt, self.solver, self.damping, self.ik_limits
-            )
-            self.configuration.integrate_inplace(vel1, dt)
-            next_error = self.error1()
-            num_iter = 0
-            while curr_error - next_error > 0.001 and num_iter < self.max_iter:
-                curr_error = next_error
-                dt = self.configuration.model.opt.timestep
-                vel1 = mink.solve_ik(
-                    self.configuration, self.tasks1, dt, self.solver, self.damping, self.ik_limits
-                )
-                self.configuration.integrate_inplace(vel1, dt)
-                next_error = self.error1()
-                num_iter += 1
+            first_frame_budget = self.max_iter * 5 if not self._has_retargeted else self.max_iter
+            self._solve_tasks_to_convergence(self.tasks1, self.error1, max_iter=first_frame_budget)
 
         if self.use_ik_match_table2:
-            curr_error = self.error2()
-            dt = self.configuration.model.opt.timestep
-            vel2 = mink.solve_ik(
-                self.configuration, self.tasks2, dt, self.solver, self.damping, self.ik_limits
-            )
-            self.configuration.integrate_inplace(vel2, dt)
-            next_error = self.error2()
-            num_iter = 0
-            while curr_error - next_error > 0.001 and num_iter < self.max_iter:
-                curr_error = next_error
-                # Solve the IK problem with the second task
-                dt = self.configuration.model.opt.timestep
-                vel2 = mink.solve_ik(
-                    self.configuration, self.tasks2, dt, self.solver, self.damping, self.ik_limits
-                )
-                self.configuration.integrate_inplace(vel2, dt)
+            first_frame_budget = self.max_iter * 5 if not self._has_retargeted else self.max_iter
+            self._solve_tasks_to_convergence(self.tasks2, self.error2, max_iter=first_frame_budget)
                 
-                next_error = self.error2()
-                num_iter += 1
-                
-            
+        self._has_retargeted = True
         qpos = self.configuration.data.qpos.copy()
         qpos = self.apply_root_motion_scale(qpos)
         return qpos
 
+    def _solve_tasks_to_convergence(self, tasks, error_fn, max_iter):
+        prev_error = error_fn()
+
+        for _ in range(max_iter):
+            if prev_error <= self.error_tolerance:
+                break
+
+            dt = self.configuration.model.opt.timestep
+            velocity = mink.solve_ik(
+                self.configuration, tasks, dt, self.solver, self.damping, self.ik_limits
+            )
+            self.configuration.integrate_inplace(velocity, dt)
+
+            next_error = error_fn()
+            if prev_error - next_error <= self.improvement_tolerance and next_error <= self.error_tolerance:
+                break
+            prev_error = next_error
+
     def apply_root_motion_scale(self, qpos):
         """Scale root translation (x, y) around first frame reference."""
-        if np.isclose(self.root_motion_scale, 1.0):
+        if np.isclose(self.root_motion_scale, 1.0).all():
             return qpos
 
         if self._root_ref_raw is None:
@@ -255,9 +262,101 @@ class GeneralMotionRetargeting:
             return qpos
 
         qpos_scaled = qpos.copy()
-        delta = qpos_scaled[:2] - self._root_ref_raw[:2]
-        qpos_scaled[:2] = self._root_ref_raw[:2] + self.root_motion_scale * delta
+        delta = qpos_scaled[:3] - self._root_ref_raw[:3]
+        qpos_scaled[:3] = self._root_ref_raw[:3] + self.root_motion_scale * delta
         return qpos_scaled
+
+    def estimate_ground_height_from_first_frame(self, qpos, foot_keywords=("foot", "ankle", "toe")):
+        data = mj.MjData(self.model)
+        data.qpos[:] = qpos
+        mj.mj_forward(self.model, data)
+
+        mesh_geom_ids, fallback_geom_ids = self._find_foot_geom_ids(foot_keywords)
+        geom_ids = mesh_geom_ids if mesh_geom_ids else fallback_geom_ids
+        if not geom_ids:
+            raise ValueError("Failed to locate foot-related geoms for automatic ground height estimation.")
+
+        lowest_z = min(self._compute_geom_lowest_z(data, geom_id) for geom_id in geom_ids)
+        return float(self.ground_offset + lowest_z)
+
+    def _find_foot_geom_ids(self, foot_keywords):
+        mesh_geom_ids = []
+        fallback_geom_ids = []
+
+        for geom_id in range(self.model.ngeom):
+            body_id = int(self.model.geom_bodyid[geom_id])
+            body_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_BODY, body_id) or ""
+            geom_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_GEOM, geom_id) or ""
+            data_id = int(self.model.geom_dataid[geom_id])
+            mesh_name = ""
+            if data_id >= 0 and int(self.model.geom_type[geom_id]) == int(mj.mjtGeom.mjGEOM_MESH):
+                mesh_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_MESH, data_id) or ""
+
+            search_text = " ".join([body_name, geom_name, mesh_name]).lower()
+            if not any(keyword in search_text for keyword in foot_keywords):
+                continue
+
+            if int(self.model.geom_type[geom_id]) == int(mj.mjtGeom.mjGEOM_MESH):
+                mesh_geom_ids.append(geom_id)
+            else:
+                fallback_geom_ids.append(geom_id)
+
+        return mesh_geom_ids, fallback_geom_ids
+
+    def _compute_geom_lowest_z(self, data, geom_id):
+        geom_type = int(self.model.geom_type[geom_id])
+        if geom_type == int(mj.mjtGeom.mjGEOM_MESH):
+            return self._compute_mesh_geom_lowest_z(data, geom_id)
+        return self._compute_primitive_geom_lowest_z(data, geom_id)
+
+    def _compute_mesh_geom_lowest_z(self, data, geom_id):
+        mesh_id = int(self.model.geom_dataid[geom_id])
+        if mesh_id < 0:
+            return float(data.geom_xpos[geom_id][2])
+
+        vert_start = int(self.model.mesh_vertadr[mesh_id])
+        vert_count = int(self.model.mesh_vertnum[mesh_id])
+        local_vertices = self.model.mesh_vert[vert_start:vert_start + vert_count]
+        geom_rot = data.geom_xmat[geom_id].reshape(3, 3)
+        geom_pos = data.geom_xpos[geom_id]
+        world_vertices = local_vertices @ geom_rot.T + geom_pos
+        return float(np.min(world_vertices[:, 2]))
+
+    def _compute_primitive_geom_lowest_z(self, data, geom_id):
+        geom_type = int(self.model.geom_type[geom_id])
+        geom_size = self.model.geom_size[geom_id]
+        geom_rot = data.geom_xmat[geom_id].reshape(3, 3)
+        geom_pos = data.geom_xpos[geom_id]
+
+        if geom_type == int(mj.mjtGeom.mjGEOM_BOX):
+            sx, sy, sz = geom_size
+            local_points = np.array([
+                [-sx, -sy, -sz],
+                [-sx, -sy, sz],
+                [-sx, sy, -sz],
+                [-sx, sy, sz],
+                [sx, -sy, -sz],
+                [sx, -sy, sz],
+                [sx, sy, -sz],
+                [sx, sy, sz],
+            ])
+        elif geom_type == int(mj.mjtGeom.mjGEOM_SPHERE):
+            local_points = np.array([[0.0, 0.0, -geom_size[0]]])
+        elif geom_type in (int(mj.mjtGeom.mjGEOM_CAPSULE), int(mj.mjtGeom.mjGEOM_CYLINDER)):
+            radius = geom_size[0]
+            half_height = geom_size[1]
+            local_points = np.array([
+                [0.0, 0.0, -half_height - radius],
+                [radius, 0.0, -half_height],
+                [-radius, 0.0, -half_height],
+                [0.0, radius, -half_height],
+                [0.0, -radius, -half_height],
+            ])
+        else:
+            return float(geom_pos[2])
+
+        world_points = local_points @ geom_rot.T + geom_pos
+        return float(np.min(world_points[:, 2]))
 
 
     def error1(self):

@@ -12,6 +12,37 @@ import os
 import numpy as np
 import mujoco as mj
 
+
+def build_original_human_overlay(original_human_data_frames, frame_idx, retargeter):
+    if original_human_data_frames is None:
+        return None
+
+    original_frame = original_human_data_frames[frame_idx]
+    root_name = retargeter.human_root_name
+    if root_name in original_frame and root_name in retargeter.scaled_human_data:
+        root_shift = (
+            retargeter.scaled_human_data[root_name][0]
+            - original_frame[root_name][0]
+        )
+    else:
+        root_shift = np.zeros(3)
+
+    return {
+        body_name: [pos + root_shift, rot]
+        for body_name, (pos, rot) in original_frame.items()
+    }
+
+
+def create_retargeter(src_human, robot, actual_human_height, bvh_hierarchy_offset, human_name, ground_height):
+    retargeter = GMR(
+        src_human=src_human,
+        tgt_robot=robot,
+        actual_human_height=actual_human_height,
+        bvh_hierarchy_offset_name=human_name if bvh_hierarchy_offset else None,
+    )
+    retargeter.ground_offset = ground_height
+    return retargeter
+
 if __name__ == "__main__":
     
     HERE = pathlib.Path(__file__).parent
@@ -104,7 +135,7 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--original_human_alpha",
-        default=0.15,
+        default=0.25,
         type=float,
         help="Transparency for original BVH frame overlay.",
     )
@@ -128,6 +159,24 @@ if __name__ == "__main__":
         type=float,
         help="override ground_height config in json file"
     )
+    parser.add_argument(
+        "--auto_ground_height",
+        action="store_true",
+        default=False,
+        help="Automatically set ground_height from the first retargeted frame's foot geometry.",
+    )
+    parser.add_argument(
+        "--align_initial_pose",
+        action="store_true",
+        default=False,
+        help="Translate the first root position to (0, 0) and rotate the whole BVH sequence so the first frame faces +X.",
+    )
+    parser.add_argument(
+        "--human",
+        default="1_75m",
+        help="specify human templete name, different height and shape",
+        choices=["1_75m", "1_7m_male"]
+    )
 
     args = parser.parse_args()
     
@@ -144,7 +193,7 @@ if __name__ == "__main__":
         ik_config = json.load(f)
     if args.ground_height is not None:
         ik_config["ground_height"] = args.ground_height
-    bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {})
+    bvh_hierarchy_offset = ik_config.get("bvh_hierarchy_offset", {}).get(args.human, {})
 
     # Load BVH trajectory with optional pre-FK hierarchy offsets.
     if args.show_original_human_frame:
@@ -154,6 +203,8 @@ if __name__ == "__main__":
             hierarchy_offset=bvh_hierarchy_offset,
             return_original_frames=True,
             up_axis=args.up_axis,
+            normalize_to_origin=args.align_initial_pose,
+            root_name=ik_config.get("human_root_name"),
         )
     else:
         lafan1_data_frames, actual_human_height = load_bvh_file(
@@ -162,23 +213,49 @@ if __name__ == "__main__":
             hierarchy_offset=bvh_hierarchy_offset,
             return_original_frames=False,
             up_axis=args.up_axis,
+            normalize_to_origin=args.align_initial_pose,
+            root_name=ik_config.get("human_root_name"),
         )
         original_human_data_frames = None
     
-    
-    # Initialize the retargeting system
-    retargeter = GMR(
-        src_human=src_human,
-        tgt_robot=args.robot,
-        actual_human_height=actual_human_height,
+    configured_ground_height = ik_config.get("ground_height", 0.0)
+    if args.auto_ground_height:
+        probe_retargeter = create_retargeter(
+            src_human,
+            args.robot,
+            actual_human_height,
+            bvh_hierarchy_offset,
+            args.human,
+            configured_ground_height,
+        )
+        probe_qpos = probe_retargeter.retarget(lafan1_data_frames[0])
+        configured_ground_height = probe_retargeter.estimate_ground_height_from_first_frame(probe_qpos)
+        ik_config["ground_height"] = configured_ground_height
+        print(f"Auto ground_height from first frame foot geometry: {configured_ground_height:.6f}")
+
+    retargeter = create_retargeter(
+        src_human,
+        args.robot,
+        actual_human_height,
+        bvh_hierarchy_offset,
+        args.human,
+        configured_ground_height,
     )
-    retargeter.ground_offset = ik_config.get("ground_height", 0.0)
+    first_qpos = retargeter.retarget(lafan1_data_frames[0])
+    first_original_human_overlay = build_original_human_overlay(
+        original_human_data_frames,
+        0,
+        retargeter,
+    )
 
     motion_fps = args.motion_fps
     
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
                                             motion_fps=motion_fps,
                                             transparent_robot=0,
+                                            initial_root_pos=first_qpos[:3],
+                                            initial_root_rot=first_qpos[3:7],
+                                            initial_dof_pos=first_qpos[7:],
                                             record_video=args.record_video,
                                             video_path=args.video_path,
                                             # video_width=2080,
@@ -221,27 +298,19 @@ if __name__ == "__main__":
         pbar.update(1)
 
         # Update task targets.
-        smplx_data = lafan1_data_frames[i]
+        if i == 0:
+            qpos = first_qpos
+            original_human_overlay = first_original_human_overlay
+        else:
+            smplx_data = lafan1_data_frames[i]
 
-        # retarget
-        qpos = retargeter.retarget(smplx_data)
-
-        original_human_overlay = None
-        if original_human_data_frames is not None:
-            original_frame = original_human_data_frames[i]
-            root_name = retargeter.human_root_name
-            if root_name in original_frame and root_name in retargeter.scaled_human_data:
-                root_shift = (
-                    retargeter.scaled_human_data[root_name][0]
-                    - original_frame[root_name][0]
-                )
-            else:
-                root_shift = np.zeros(3)
-
-            original_human_overlay = {
-                body_name: [pos + root_shift, rot]
-                for body_name, (pos, rot) in original_frame.items()
-            }
+            # retarget
+            qpos = retargeter.retarget(smplx_data)
+            original_human_overlay = build_original_human_overlay(
+                original_human_data_frames,
+                i,
+                retargeter,
+            )
         
 
         # visualize
@@ -256,6 +325,7 @@ if __name__ == "__main__":
             rate_limit=args.rate_limit,
             follow_camera=args.follow_camera,
             # human_pos_offset=np.array([0.0, 0.0, 0.0])
+            human_motion_data_original_rgba_list = [[0.9, 0.45, 0.45, args.original_human_alpha], [0.0, 0.54, 0.48, args.original_human_alpha], [0.25, 0.32, 0.71, args.original_human_alpha]]
         )
 
         if args.loop:

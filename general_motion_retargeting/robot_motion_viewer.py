@@ -20,8 +20,10 @@ def draw_frame(
     pos_offset=np.array([0, 0, 0]),
     alpha=1.0,
     axis_width=0.005,
+    rgba_list = None
 ):
-    rgba_list = [[1, 0, 0, alpha], [0, 1, 0, alpha], [0, 0, 1, alpha]]
+    if rgba_list is None:
+        rgba_list = [[1, 0, 0, alpha], [0, 1, 0, alpha], [0, 0, 1, alpha]]
     for i in range(3):
         geom = v.user_scn.geoms[v.user_scn.ngeom]
         mj.mjv_initGeom(
@@ -50,6 +52,9 @@ class RobotMotionViewer:
                 camera_follow=True,
                 motion_fps=30,
                 transparent_robot=0,
+                initial_root_pos=None,
+                initial_root_rot=None,
+                initial_dof_pos=None,
                 # video recording
                 record_video=False,
                 video_path=None,
@@ -64,6 +69,12 @@ class RobotMotionViewer:
         self.data = mj.MjData(self.model)
         self.robot_base = ROBOT_BASE_DICT[robot_type]
         self.viewer_cam_distance = VIEWER_CAM_DISTANCE_DICT[robot_type]
+        if initial_root_pos is not None:
+            self.data.qpos[:3] = initial_root_pos
+        if initial_root_rot is not None:
+            self.data.qpos[3:7] = initial_root_rot
+        if initial_dof_pos is not None:
+            self.data.qpos[7:] = initial_dof_pos
         mj.mj_step(self.model, self.data)
         
         self.motion_fps = motion_fps
@@ -111,6 +122,7 @@ class RobotMotionViewer:
             # rate limit
             rate_limit=True, 
             follow_camera=True,
+            human_motion_data_original_rgba_list = None
             ):
         """
         by default visualize robot motion.
@@ -147,6 +159,7 @@ class RobotMotionViewer:
                         pos_offset=human_pos_offset,
                         alpha=original_human_alpha,
                         axis_width=0.004,
+                        rgba_list = human_motion_data_original_rgba_list
                     )
 
             # Draw the task targets for reference

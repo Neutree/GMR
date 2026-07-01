@@ -149,7 +149,7 @@
             <geom mesh="thighLeft_2" class="collision" />
             <body name="shinLeft" pos="0 -0.0355 -0.369">
               <inertial pos="-0.00053135 0.00081959 -0.145381" quat="0.788039 0.00408898 0.00696215 0.615572" mass="2.25363" diaginertia="0.0215921 0.0215141 0.00136466" />
-              <joint name="kneePitch_Left" pos="0 0 0" axis="0 1 0" range="0 2.391" actuatorfrcrange="-230 230" />
+              <joint name="kneePitch_Left" pos="0 0 0" axis="0 1 0" range="0.052 2.391" actuatorfrcrange="-230 230" />
               <geom mesh="shinLeft_0" material="black" class="visual" />
               <geom mesh="shinLeft_2" material="silver" class="visual" />
               <geom mesh="shinLeft_0" class="collision" />
@@ -194,7 +194,7 @@
             <geom mesh="thighRight_2" class="collision" />
             <body name="shinRight" pos="0 0.0355 -0.369">
               <inertial pos="-0.00052844 -0.00082152 -0.145334" quat="0.619488 0.00695186 0.00407547 0.784965" mass="2.25459" diaginertia="0.0215721 0.021496 0.00136482" />
-              <joint name="kneePitch_Right" pos="0 0 0" axis="0 1 0" range="0 2.391" actuatorfrcrange="-230 230" />
+              <joint name="kneePitch_Right" pos="0 0 0" axis="0 1 0" range="0.052 2.391" actuatorfrcrange="-230 230" />
               <geom mesh="shinRight_1" material="silver" class="visual" />
               <geom mesh="shinRight_2" material="black" class="visual" />
               <geom mesh="shinRight_1" class="collision" />

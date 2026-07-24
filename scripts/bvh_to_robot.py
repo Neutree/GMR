@@ -5,7 +5,7 @@ import json
 from general_motion_retargeting import GeneralMotionRetargeting as GMR
 from general_motion_retargeting import RobotMotionViewer
 from general_motion_retargeting.params import VIEWER_CAM_DISTANCE_DICT, IK_CONFIG_DICT
-from general_motion_retargeting.utils.lafan1 import load_bvh_file
+from general_motion_retargeting.utils.lafan1 import load_bvh_file, resolve_motion_fps
 from rich import print
 from tqdm import tqdm
 import os
@@ -101,8 +101,9 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--motion_fps",
-        default=30,
+        default=None,
         type=int,
+        help="Override motion fps. Default: auto from BVH 'Frame Time' (1/FrameTime).",
     )
 
     parser.add_argument(
@@ -173,9 +174,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--human",
-        default="1_75m",
+        default="1_75m_male",
         help="specify human templete name, different height and shape",
-        choices=["1_75m", "1_7m_male"]
+        choices=["1_75m_male", "1_7m_female"]
     )
 
     args = parser.parse_args()
@@ -248,7 +249,7 @@ if __name__ == "__main__":
         retargeter,
     )
 
-    motion_fps = args.motion_fps
+    motion_fps, _bvh_fps_info = resolve_motion_fps(args.bvh_file, args.motion_fps)
     
     robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
                                             motion_fps=motion_fps,
@@ -270,7 +271,7 @@ if __name__ == "__main__":
     fps_start_time = time.time()
     fps_display_interval = 2.0  # Display FPS every 2 seconds
     
-    print(f"mocap_frame_rate: {motion_fps}")
+    print(f"[BVH FPS] mocap_frame_rate / saved pkl fps: {motion_fps}")
     
     # Create tqdm progress bar for the total number of frames
     pbar = tqdm(total=len(lafan1_data_frames), desc="Retargeting")

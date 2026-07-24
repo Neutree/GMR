@@ -493,24 +493,24 @@
         "RightHand": "RightForeArm"
     },
     "bvh_hierarchy_offset": {
-        "1_75m": {
-            "LeftUpLeg": [0.03, 0, 0],
-            "RightUpLeg": [-0.03, 0, 0],
-            "LeftLeg": [0.0, 0.13, 0],
-            "RightLeg": [0.0, 0.13, 0],
-            "LeftFoot": [0.0, 0.13, 0],
-            "RightFoot": [0.0, 0.13, 0.0],
+        "1_75m_male": {
+            "LeftUpLeg": [0.01, 0, 0],
+            "RightUpLeg": [-0.01, 0, 0],
+            "LeftLeg": [0.0, 0.1, 0],
+            "RightLeg": [0.0, 0.1, 0],
+            "LeftFoot": [0.0, 0.14, 0],
+            "RightFoot": [0.0, 0.14, 0.0],
 
-            "Spine1": [0, -0.105, 0],
+            "Spine1": [0, -0.075, 0],
 
-            "LeftArm": [0.0, 0.015, 0],
-            "RightArm": [0.0, 0.015, 0],
+            "LeftArm": [0.04, 0.01, 0],
+            "RightArm": [-0.04, 0.01, 0],
             "LeftForeArm": [-0.07, 0, 0],
             "RightForeArm": [0.07, 0, 0],
             "LeftHand": [-0.06, 0, 0],
             "RightHand": [0.06, 0, 0]
         },
-        "1_7m_male": {
+        "1_7m_female": {
             "LeftUpLeg": [0.03, 0, 0],
             "RightUpLeg": [-0.03, 0, 0],
             "LeftLeg": [0.0, 0.06, 0],

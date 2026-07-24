@@ -1,8 +1,70 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+import re
 
 import general_motion_retargeting.utils.lafan_vendor.utils as utils
 from general_motion_retargeting.utils.lafan_vendor.extract import read_bvh
+
+
+def get_bvh_frame_info(bvh_file):
+    """Read BVH header fps metadata without loading the full motion.
+
+    Returns:
+        dict with keys:
+          - frames: int | None
+          - frame_time: float (seconds)
+          - fps: float (= 1 / frame_time)
+    """
+    frames = None
+    frame_time = None
+    with open(bvh_file, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            m_frames = re.match(r"\s*Frames:\s+(\d+)", line)
+            if m_frames:
+                frames = int(m_frames.group(1))
+                continue
+            m_time = re.match(r"\s*Frame Time:\s+([0-9]*\.?[0-9]+(?:[eE][-+]?\d+)?)", line)
+            if m_time:
+                frame_time = float(m_time.group(1))
+                break
+
+    if frame_time is None or frame_time <= 0:
+        raise ValueError(f"Cannot read valid 'Frame Time' from BVH: {bvh_file}")
+
+    fps = 1.0 / frame_time
+    return {
+        "frames": frames,
+        "frame_time": frame_time,
+        "fps": fps,
+    }
+
+
+def resolve_motion_fps(bvh_file, motion_fps=None):
+    """Resolve motion fps from BVH header unless an explicit override is given.
+
+    Args:
+        bvh_file: path to BVH
+        motion_fps: optional explicit fps override (int/float). None/<=0 means auto.
+
+    Returns:
+        (fps_int, info_dict)
+    """
+    info = get_bvh_frame_info(bvh_file)
+    auto_fps = int(round(info["fps"]))
+    if motion_fps is None or int(motion_fps) <= 0:
+        used = auto_fps
+        source = "auto(from BVH Frame Time)"
+    else:
+        used = int(motion_fps)
+        source = "manual override"
+    print(
+        f"[BVH FPS] file={bvh_file}\n"
+        f"         Frames: {info['frames']}\n"
+        f"         Frame Time: {info['frame_time']:.6f} s\n"
+        f"         computed fps = 1/FrameTime = {info['fps']:.6f}\n"
+        f"         >>> using motion_fps = {used}  ({source})"
+    )
+    return used, info
 
 
 def _infer_initial_forward(frame, root_name):

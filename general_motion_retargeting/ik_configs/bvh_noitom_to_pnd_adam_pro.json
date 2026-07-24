@@ -493,7 +493,7 @@
         "RightHand": "RightForeArm"
     },
     "bvh_hierarchy_offset": {
-        "1_75m": {
+        "1_75m_male": {
             "LeftUpLeg": [0.041, -0.07, 0],
             "RightUpLeg": [-0.041, -0.07, 0],
             "LeftLeg": [0.0, 0.02, 0],
@@ -510,7 +510,7 @@
             "LeftHand": [0.01, 0, 0],
             "RightHand": [-0.01, 0, 0]
         },
-        "1_7m_male": {
+        "1_7m_female": {
             "LeftUpLeg": [0.03, 0, 0],
             "RightUpLeg": [-0.03, 0, 0],
             "LeftLeg": [0.0, 0.06, 0],
